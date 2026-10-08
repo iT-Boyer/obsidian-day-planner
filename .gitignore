@@ -1,10 +1,10 @@
 *.DS_Store
 # npm
 node_modules
-package-lock.json
 
 # build
 main.js
+styles.css
 *.js.map
 *.zip
 dist/
@@ -13,3 +13,7 @@ coverage/
 test-vault/
 
 TODO.md
+.idea
+data.json
+.env
+.claude

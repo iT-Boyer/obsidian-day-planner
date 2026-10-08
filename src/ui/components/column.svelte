@@ -1,0 +1,42 @@
+<script lang="ts">
+  import { getHourSize } from "../../global-store/derived-settings";
+  import { settingsStore } from "../../global-store/settings";
+
+  export let visibleHours: number[];
+</script>
+
+<div class="column">
+  <slot />
+  {#each visibleHours as hour}
+    <div style:height="{getHourSize($settingsStore)}px" class="hour-block">
+      <div
+        style:height="{getHourSize($settingsStore) / 2}px"
+        class="half-hour-separator"
+      ></div>
+    </div>
+  {/each}
+</div>
+
+<style>
+  .column {
+    position: relative;
+    flex: 1 0 var(--timeline-flex-basis);
+    background-color: var(--column-background-color, var(--background-primary));
+  }
+
+  .column:not(:last-child) {
+    border-right: 1px dashed var(--background-modifier-border);
+  }
+
+  .hour-block {
+    flex: 1 0 0;
+  }
+
+  .hour-block:not(:last-child) {
+    border-bottom: var(--border-base);
+  }
+
+  .half-hour-separator {
+    border-bottom: 1px dashed var(--background-modifier-border);
+  }
+</style>

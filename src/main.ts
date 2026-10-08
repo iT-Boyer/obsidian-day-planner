@@ -1,188 +1,715 @@
+import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { derived, get, type Readable, type Writable } from "svelte/store";
+import { isNotVoid } from "typed-assert";
+
 import {
-  Plugin,
-  TAbstractFile,
-  Vault,
-  WorkspaceLeaf, 
-} from 'obsidian';
-import type { Editor } from 'codemirror';
-import { DayPlannerSettingsTab } from './settings-tab';
-import { DayPlannerSettings, DayPlannerMode, NoteForDate, NoteForDateQuery } from './settings';
-import StatusBar from './status-bar';
-import Progress from './progress';
-import PlannerMarkdown from './planner-md';
-import DayPlannerFile from './file';
-import Parser from './parser';
-import { VIEW_TYPE_TIMELINE } from './constants';
-import TimelineView from './timeline-view';
-import { PlanSummaryData } from './plan-data';
+  obsidianContextKey,
+  viewTypeReleaseNotes,
+  viewTypeTimeline,
+  viewTypeMultiDay,
+  viewTypeTimeTracker,
+  icalRefreshIntervalMillis,
+  icalParseLowerLimit,
+} from "./constants";
+import {
+  createDeleteTimeBlockHandler,
+  createEditLineHandler,
+  createUpdateHandler,
+  getTextFromUser,
+} from "./create-update-handler";
+import { createDumpMetadataCommand } from "./dump-metadata";
+import { VaultIndexAdapter } from "./feature/vault-index-adapter";
+import { currentTime } from "./global-store/current-time";
+import { settingsSignal, settingsStore } from "./global-store/settings";
+import {
+  compareByTimestampInText,
+  fromMarkdown,
+  positionContainsPoint,
+  sortListsRecursively,
+  toEditorPos,
+  toMarkdown,
+  toMdastPoint,
+} from "./mdast/mdast";
+import type { DateRanges } from "./redux/date-ranges";
+import { icalRefreshRequested } from "./redux/ical/ical-slice";
+import { type IcalParseTaskResult } from "./redux/ical/init-ical-listeners";
+import { selectActiveLogTimeBlocks } from "./redux/index/index-selectors";
+import { settingsUpdated } from "./redux/settings-slice";
+import {
+  type AppDispatch,
+  type AppStore,
+  createReactor,
+  type RootState,
+} from "./redux/store";
+import { type UseSelector } from "./redux/use-selector";
+import { TransactionWriter } from "./service/diff-writer";
+import { createYamlEditTargets } from "./service/edit-yaml";
+import { createIndexServices } from "./service/index/create-index-services";
+import { ListPropsParser } from "./service/list-props-parser";
+import { LogEntryEditor } from "./service/log-entry-editor";
+import { MetadataCacheFacade } from "./service/metadata-cache-facade";
+import { PeriodicNotes } from "./service/periodic-notes";
+import {
+  DefaultSearchOrderingService,
+  type SearchOrderingService,
+} from "./service/search-ordering-service";
+import {
+  type SearchService,
+  VaultSearchService,
+} from "./service/search-service";
+import { VaultFacade } from "./service/vault-facade";
+import { WorkspaceFacade } from "./service/workspace-facade";
+import { type DayPlannerSettings, defaultSettings } from "./settings";
+import { createGetTasksApi } from "./tasks-plugin";
+import type {
+  EditableTimeBlock,
+  LogTimeBlock,
+  RemoteTimeBlock,
+} from "./time-block-types";
+import type { ObsidianContext, OnUpdateFn, PointerDateTime } from "./types";
+import { ClockInOnAnythingModal } from "./ui/clock-in-on-anything-modal";
+import { askForConfirmation } from "./ui/confirmation-modal";
+import { createEditorMenuCallback } from "./ui/editor-menu";
+import { useTimeBlocks } from "./ui/hooks/use-time-blocks";
+import { createLogEntryEditModalOpener } from "./ui/log-entry-edit-modal";
+import MultiDayView from "./ui/multi-day-view";
+import { DayPlannerReleaseNotesView } from "./ui/release-notes";
+import { DayPlannerSettingsTab } from "./ui/settings-tab";
+import { mountStatusBarWidget } from "./ui/status-bar-widget";
+import TimeTrackerView from "./ui/time-tracker-view";
+import { createTimelineSettingsModalOpener } from "./ui/timeline-settings-modal";
+import TimelineView from "./ui/timeline-view";
+import { UndoNotice } from "./ui/undo-notice";
+import { createEnvironmentHooks } from "./util/create-environment-hooks";
+import { createRenderMarkdown } from "./util/create-render-markdown";
+import { createShowPreview } from "./util/create-show-preview";
+import { runWithNoticeOnError } from "./util/effect";
+import { notifyAboutStartedTimeBlocks } from "./util/notify-about-started-time-blocks";
+import { createBackgroundBatchScheduler } from "./util/scheduler";
 
 export default class DayPlanner extends Plugin {
-  settings: DayPlannerSettings;
-  vault: Vault;
-  file: DayPlannerFile;
-  plannerMD: PlannerMarkdown;
-  statusBar: StatusBar; 
-  notesForDatesQuery: NoteForDateQuery;
-  timelineView: TimelineView;
-  
+  getSettings!: () => DayPlannerSettings;
+  private settingsStore!: Writable<DayPlannerSettings>;
+  private workspaceFacade!: WorkspaceFacade;
+  private periodicNotes!: PeriodicNotes;
+  private logEntryEditor!: LogEntryEditor;
+  private vaultFacade!: VaultFacade;
+  private searchService!: SearchService;
+  private searchOrderingService!: SearchOrderingService;
+  private transactionWriter!: TransactionWriter;
+  private metadataCacheFacade!: MetadataCacheFacade;
+  private undoNotice!: UndoNotice;
+
+  private openClockInOnAnythingModal = () => {
+    new ClockInOnAnythingModal(
+      this.app,
+      this.searchService,
+      this.searchOrderingService,
+      this.vaultFacade,
+      this.logEntryEditor,
+    ).open();
+  };
+
   async onload() {
-    console.log("Loading Day Planner plugin");
-    this.vault = this.app.vault;
-    this.settings = Object.assign(new DayPlannerSettings(), await this.loadData());
-    this.notesForDatesQuery = new NoteForDateQuery();
-    this.file = new DayPlannerFile(this.vault, this.settings);
-    const progress = new Progress();
-    const parser = new Parser(this.settings);
-    this.plannerMD = new PlannerMarkdown(this.app.workspace, this.settings, this.file, parser, progress)
-    this.statusBar = new StatusBar(
-      this.settings,
-      this.addStatusBarItem(), 
-      this.app.workspace, 
-      progress,
-      new PlannerMarkdown(this.app.workspace, this.settings, this.file, parser, progress),
-      this.file
+    const { vault, metadataCache } = this.app;
+
+    const initialSettings: DayPlannerSettings = {
+      ...defaultSettings,
+      ...(await this.loadData()),
+    };
+
+    const getTasksApi = createGetTasksApi(this.app);
+    const listPropsParser = new ListPropsParser(vault, metadataCache);
+
+    this.periodicNotes = new PeriodicNotes();
+
+    const indexServices = createIndexServices({
+      listPropsParser,
+      periodicNotes: this.periodicNotes,
+      settings: initialSettings,
+    });
+    this.vaultFacade = new VaultFacade(vault, getTasksApi);
+    this.transactionWriter = new TransactionWriter(this.vaultFacade);
+    this.undoNotice = new UndoNotice(this.transactionWriter.undo);
+    this.workspaceFacade = new WorkspaceFacade(
+      this.app.workspace,
+      this.vaultFacade,
+      this.periodicNotes,
+    );
+    this.metadataCacheFacade = new MetadataCacheFacade(metadataCache);
+    this.searchService = new VaultSearchService(vault, metadataCache);
+
+    const icalParseScheduler =
+      createBackgroundBatchScheduler<IcalParseTaskResult>({
+        timeRemainingLowerLimit: icalParseLowerLimit,
+      });
+
+    const {
+      store,
+      useSelector,
+      listenerMiddleware,
+      remoteTimeBlocks,
+      localTimeBlocks,
+      logTimeBlocks,
+      pointerDateTime,
+      dateRanges,
+    } = createReactor({
+      listPropsParser,
+      indexServices,
+      vault,
+      metadataCache,
+      periodicNotes: this.periodicNotes,
+      settings: initialSettings,
+      icalParseScheduler,
+      currentTime,
+    });
+
+    const { dispatch } = store;
+
+    this.searchOrderingService = new DefaultSearchOrderingService(
+      vault,
+      store.getState,
     );
 
-    this.statusBar.initStatusBar();
-    this.registerEvent(this.app.vault.on('modify', this.codeMirror, ''));
-    
-    this.addCommand({
-      id: 'app:add-day-planner-to-note',
-      name: 'Add a Day Planner template for today to the current note',
-      callback: () => this.modeGuard(async () => await this.insertDayPlannerIntoCurrentNote(true)),
-      hotkeys: []
+    const yamlEditTargets = createYamlEditTargets({
+      vaultFacade: this.vaultFacade,
+      metadataCacheFacade: this.metadataCacheFacade,
+      listPropsParser,
+      workspaceFacade: this.workspaceFacade,
+    });
+    this.logEntryEditor = new LogEntryEditor(yamlEditTargets);
+
+    this.register(() => {
+      listenerMiddleware.clearListeners();
+      icalParseScheduler.cancelTasks();
     });
 
-    this.addCommand({
-      id: 'app:link-day-planner-to-note',
-      name: 'Link today\'s Day Planner to the current note',
-      callback: () => this.modeGuard(async () => await this.insertDayPlannerIntoCurrentNote(false)),
-      hotkeys: []
+    this.initSettingsStore({ initialSettings, dispatch });
+    this.registerViews({
+      store,
+      dispatch,
+      remoteTimeBlocks,
+      pointerDateTime,
+      useSelector,
+      localTimeBlocks,
+      logTimeBlocks,
+      dateRanges,
     });
 
-    this.addCommand({
-      id: 'app:unlink-day-planner-from-note',
-      name: 'Unlink today\'s Day Planner from its note',
-      callback: () => this.modeGuard(async () => await this.unlinkDayPlanner()),
-      hotkeys: []
+    const handleEditorMenu = createEditorMenuCallback({
+      logEntryEditor: this.logEntryEditor,
+      metadataCacheFacade: this.metadataCacheFacade,
+      metadataCache,
+      listPropsParser,
     });
 
-    this.addCommand({
-      id: 'app:show-day-planner-timeline',
-      name: 'Show the Day Planner Timeline',
-      callback: () => this.initLeaf(),
-      hotkeys: []
+    this.registerEvent(this.app.workspace.on("editor-menu", handleEditorMenu));
+
+    this.registerCommands();
+    this.addRibbonIcons();
+    this.addSettingTab(new DayPlannerSettingsTab(this, this.settingsStore));
+
+    await this.handleNewPluginVersion();
+
+    this.app.workspace.onLayoutReady(async () => {
+      await this.initLeafSilently(viewTypeTimeline);
+      await this.initLeafSilently(viewTypeTimeTracker);
     });
 
-    this.addCommand({
-      id: 'app:show-day-planner-today-note',
-      name: 'Show today\'s Day Planner',
-      callback: () => this.app.workspace.openLinkText(this.file.todayPlannerFilePath(), '', true),
-      hotkeys: []
-    });
-
-    this.registerView(
-      VIEW_TYPE_TIMELINE,
-      (leaf: WorkspaceLeaf) =>
-        (this.timelineView = new TimelineView(leaf, this.settings))
+    const timeTrackingFeature = new VaultIndexAdapter(
+      this,
+      this.app.workspace,
+      vault,
+      metadataCache,
+      dispatch,
     );
 
-    this.addSettingTab(new DayPlannerSettingsTab(this.app, this));
-    this.registerInterval(
-      window.setInterval(async () => {
-        try {
-          if(this.file.hasTodayNote()){
-            // console.log('Active note found, starting file processing')
-            const planSummary = await this.plannerMD.parseDayPlanner();
-            planSummary.calculate();
-            await this.statusBar.refreshStatusBar(planSummary)
-            await this.plannerMD.updateDayPlannerMarkdown(planSummary)
-            this.timelineView && this.timelineView.update(planSummary);
-          } else{
-            // console.log('No active note, skipping file processing')
-          }
-        } catch (error) {
-            console.log(error)
-        }
-      }, 2000));
+    timeTrackingFeature.load();
+  }
+
+  async onunload() {
+    return Promise.all([
+      this.detachLeavesOfType(viewTypeTimeline),
+      this.detachLeavesOfType(viewTypeMultiDay),
+      this.detachLeavesOfType(viewTypeTimeTracker),
+    ]);
+  }
+
+  addRibbonIcons() {
+    this.addRibbonIcon(
+      "calendar-range",
+      "Open Timeline",
+      this.initTimelineLeaf,
+    );
+    this.addRibbonIcon("table-2", "Open Multi-Day View", this.initWeeklyLeaf);
+  }
+
+  initWeeklyLeaf = async () => {
+    await this.app.workspace.getLeaf("tab").setViewState({
+      type: viewTypeMultiDay,
+      active: true,
+    });
+  };
+
+  initTimeTrackerTab = async () => {
+    await this.app.workspace.getLeaf("tab").setViewState({
+      type: viewTypeTimeTracker,
+      active: true,
+    });
+  };
+
+  initTimelineTab = async () => {
+    await this.app.workspace.getLeaf("tab").setViewState({
+      type: viewTypeTimeline,
+      active: true,
+    });
+  };
+
+  initLeafSilently = async (viewType: string) => {
+    const [firstExisting] = this.app.workspace.getLeavesOfType(viewType);
+    if (firstExisting) {
+      return;
     }
 
-    initLeaf() {
-      if (this.app.workspace.getLeavesOfType(VIEW_TYPE_TIMELINE).length > 0) {
-        return;
-      }
-      this.app.workspace.getRightLeaf(true).setViewState({
-        type: VIEW_TYPE_TIMELINE,
+    await this.detachLeavesOfType(viewType);
+
+    await this.app.workspace.getRightLeaf(false)?.setViewState({
+      type: viewType,
+    });
+  };
+
+  initRightPanelLeaf = async (viewType: string) => {
+    const [firstExisting] = this.app.workspace.getLeavesOfType(viewType);
+
+    if (firstExisting) {
+      this.app.workspace.revealLeaf(firstExisting);
+      return;
+    }
+
+    await this.detachLeavesOfType(viewType);
+    await this.app.workspace.getRightLeaf(false)?.setViewState({
+      type: viewType,
+      active: true,
+    });
+    this.app.workspace.rightSplit.expand();
+  };
+
+  initTimelineLeaf = async () => this.initRightPanelLeaf(viewTypeTimeline);
+
+  initTimeTrackerLeaf = async () =>
+    this.initRightPanelLeaf(viewTypeTimeTracker);
+
+  private async handleNewPluginVersion() {
+    if (this.getSettings().pluginVersion === currentPluginVersion) {
+      return;
+    }
+
+    this.settingsStore.update((previous) => ({
+      ...previous,
+      pluginVersion: currentPluginVersion,
+    }));
+
+    if (this.getSettings().releaseNotes) {
+      this.app.workspace.onLayoutReady(async () => {
+        await this.showReleaseNotes();
+      });
+    }
+  }
+
+  private registerCommands() {
+    this.addCommand({
+      id: "show-day-planner-timeline",
+      name: "Show timeline",
+      callback: async () => await this.initTimelineLeaf(),
+    });
+
+    this.addCommand({
+      id: "show-timeline-tab",
+      name: "Show timeline in regular tab",
+      callback: this.initTimelineTab,
+    });
+
+    this.addCommand({
+      id: "show-weekly-view",
+      name: "Show week planner",
+      callback: this.initWeeklyLeaf,
+    });
+
+    this.addCommand({
+      id: "show-multi-day-view",
+      name: "Show multi-day planner",
+      callback: this.initWeeklyLeaf,
+    });
+
+    this.addCommand({
+      id: "show-time-tracker",
+      name: "Show time tracker",
+      callback: this.initTimeTrackerLeaf,
+    });
+
+    this.addCommand({
+      id: "show-time-tracker-tab",
+      name: "Show time tracker in regular tab",
+      callback: this.initTimeTrackerTab,
+    });
+
+    this.addCommand({
+      id: "show-day-planner-today-note",
+      name: "Open today's Day Planner",
+      callback: async () => {
+        const dailyNote = await this.periodicNotes.createDailyNoteIfNeeded(
+          window.moment(),
+        );
+
+        await this.app.workspace.getLeaf(false).openFile(dailyNote);
+      },
+    });
+
+    this.addCommand({
+      id: "reorder-tasks-by-time",
+      name: "Sort tasks under cursor by time",
+      editorCallback: (editor) => {
+        const mdastRoot = fromMarkdown(editor.getValue());
+        const cursorPoint = toMdastPoint(editor.getCursor());
+
+        // todo: move out
+        const list = mdastRoot.children.find(
+          (rootContent) =>
+            rootContent.position &&
+            positionContainsPoint(rootContent.position, cursorPoint),
+        );
+
+        if (!list) {
+          new Notice("There is no list under cursor");
+
+          return;
+        }
+
+        const sorted = sortListsRecursively(list, compareByTimestampInText);
+        const updatedText = toMarkdown(sorted).trim();
+
+        isNotVoid(sorted.position);
+
+        editor.replaceRange(
+          updatedText,
+          toEditorPos(sorted.position.start),
+          toEditorPos(sorted.position.end),
+        );
+      },
+    });
+
+    this.addCommand({
+      id: "clock-in",
+      icon: "play",
+      name: "Clock in",
+      editorCallback: () =>
+        runWithNoticeOnError(this.logEntryEditor.clockInUnderCursor()),
+    });
+
+    this.addCommand({
+      icon: "square",
+      id: "clock-out",
+      name: "Clock out",
+      editorCallback: () =>
+        runWithNoticeOnError(this.logEntryEditor.clockOutUnderCursor()),
+    });
+
+    this.addCommand({
+      icon: "trash-2",
+      id: "cancel-clock",
+      name: "Cancel clock",
+      editorCallback: () =>
+        runWithNoticeOnError(this.logEntryEditor.cancelClockUnderCursor()),
+    });
+
+    this.addCommand({
+      id: "clock-in-on-anything",
+      name: "Clock in on anything...",
+      callback: this.openClockInOnAnythingModal,
+    });
+  }
+
+  private initSettingsStore(props: {
+    initialSettings: DayPlannerSettings;
+    dispatch: AppDispatch;
+  }) {
+    const { initialSettings, dispatch } = props;
+
+    settingsStore.set(initialSettings);
+
+    this.register(
+      settingsStore.subscribe(async (newValue) => {
+        dispatch(settingsUpdated(newValue));
+
+        await this.saveData(newValue);
+      }),
+    );
+
+    this.settingsStore = settingsStore;
+    this.getSettings = () => get(settingsStore);
+  }
+
+  private async detachLeavesOfType(type: string) {
+    // Although this is synchronous, without wrapping into a promise, weird things happen:
+    // - when re-initializing the weekly view, it gets deleted every other time instead of getting re-created
+    // - or the tabs get hidden
+    await this.app.workspace.detachLeavesOfType(type);
+  }
+
+  private showReleaseNotes = async () => {
+    await this.app.workspace.getLeaf("tab").setViewState({
+      type: viewTypeReleaseNotes,
+      active: true,
+    });
+  };
+
+  private registerViews(props: {
+    store: AppStore;
+    dispatch: AppDispatch;
+    useSelector: UseSelector<RootState>;
+    remoteTimeBlocks: Readable<RemoteTimeBlock[]>;
+    localTimeBlocks: Readable<EditableTimeBlock[]>;
+    logTimeBlocks: Readable<LogTimeBlock[]>;
+    pointerDateTime: Writable<PointerDateTime>;
+    dateRanges: DateRanges;
+  }) {
+    const {
+      store,
+      dispatch,
+      useSelector,
+      remoteTimeBlocks,
+      localTimeBlocks,
+      logTimeBlocks,
+      pointerDateTime,
+      dateRanges,
+    } = props;
+
+    const onUpdate: OnUpdateFn = createUpdateHandler({
+      getSettings: this.getSettings,
+      transactionWriter: this.transactionWriter,
+      vaultFacade: this.vaultFacade,
+      periodicNotes: this.periodicNotes,
+      onEditConfirmed: this.undoNotice.show,
+      onEditCanceled: () => {
+        new Notice("Edit canceled");
+      },
+      getTextInput: () =>
+        getTextFromUser({
+          app: this.app,
+          getDescriptionText: (value) =>
+            value.trim().length === 0
+              ? "Start typing to create a task"
+              : `Create item "${value}"`,
+        }),
+      getConfirmationInput: (input) =>
+        askForConfirmation({
+          ...input,
+          app: this.app,
+        }),
+    });
+
+    const onEditAborted = () => {
+      new Notice("Tasks changed externally; edit canceled");
+    };
+
+    const { isDarkMode, isOnline, isModPressed } = createEnvironmentHooks({
+      workspace: this.app.workspace,
+    });
+
+    const { timeBlocksWithTimeForToday, editContext, newlyStartedTimeBlocks } =
+      useTimeBlocks({
+        onUpdate,
+        onEditAborted,
+        isOnline,
+        settingsStore: this.settingsStore,
+        currentTime,
+        pointerDateTime,
+        remoteTimeBlocks,
+        localTimeBlocks,
+        logTimeBlocks,
+      });
+
+    // Once the time tracker column becomes editable, its operation joins this
+    // one instead of every consumer growing a second subscription.
+    const isEditing = derived(editContext.editOperation, ($editOperation) =>
+      Boolean($editOperation),
+    );
+
+    this.registerInterval(
+      window.setInterval(() => {
+        dispatch(icalRefreshRequested());
+      }, icalRefreshIntervalMillis),
+    );
+
+    dispatch(icalRefreshRequested());
+
+    this.registerDomEvent(window, "blur", editContext.cancelEdit);
+    this.registerDomEvent(document, "pointerup", editContext.cancelEdit);
+
+    this.register(
+      editContext.cursor.subscribe(({ bodyCursor }) => {
+        document.body.style.cursor = bodyCursor;
+      }),
+    );
+    const openLogEntryEditModal = createLogEntryEditModalOpener(
+      this.app,
+      this.logEntryEditor,
+    );
+
+    const openTimelineSettingsModal = createTimelineSettingsModalOpener(
+      this.app,
+      settingsStore,
+    );
+
+    const destroyStatusBarWidget = mountStatusBarWidget({
+      plugin: this,
+      dateRanges,
+      timeBlocksWithTimeForToday,
+      useSelector,
+      logEntryEditor: this.logEntryEditor,
+      workspaceFacade: this.workspaceFacade,
+      openLogEntryEditModal,
+      openClockInOnAnythingModal: this.openClockInOnAnythingModal,
+    });
+
+    this.register(destroyStatusBarWidget);
+
+    this.register(
+      newlyStartedTimeBlocks.subscribe((value) =>
+        notifyAboutStartedTimeBlocks(value, this.getSettings()),
+      ),
+    );
+    this.addCommand({
+      id: "re-sync",
+      name: "Re-sync tasks",
+      callback: async () => {
+        dispatch(icalRefreshRequested());
+      },
+    });
+
+    this.addCommand({
+      id: "jump-to-active-clock",
+      name: "Jump to active clock",
+      callback: async () => {
+        const activeLogTimeBlocks = selectActiveLogTimeBlocks(
+          store.getState(),
+          window.moment(),
+        );
+
+        if (activeLogTimeBlocks.length === 0) {
+          new Notice("No active clocks found");
+
+          return;
+        }
+
+        const firstActiveLogTimeBlock = activeLogTimeBlocks[0];
+
+        isNotVoid(firstActiveLogTimeBlock);
+
+        await this.workspaceFacade.revealLocation(firstActiveLogTimeBlock);
+      },
+    });
+
+    if (envMode === "development") {
+      this.addCommand({
+        id: "dump-metadata",
+        name: "Dump metadata to files",
+        callback: createDumpMetadataCommand(this.app),
       });
     }
 
-    modeGuard(command: () => any): void {
-      if(this.settings.mode !== DayPlannerMode.Command) {
-        new Notification('Day Planner plugin in File mode', {silent: true, body: 'Switch to Command mode in settings to use this command'});
-        return;
-      } else {
-        command();
-      }
-    }
+    const editLine = createEditLineHandler({
+      getSettings: this.getSettings,
+      transactionWriter: this.transactionWriter,
+      onConfirmed: this.undoNotice.show,
+    });
 
-    async insertDayPlannerIntoCurrentNote(insertTemplate: boolean){
-      try {
-        if(!this.settings.notesToDates){
-          this.settings.notesToDates = [];
-          this.saveData(this.settings)
-        }
-        
-        const view = this.app.workspace.activeLeaf.view;
-        const filePath = view.getState().file;
-        const dayPlannerExists = this.notesForDatesQuery.exists(this.settings.notesToDates);
-        const activeDayPlannerPath = this.notesForDatesQuery.active(this.settings.notesToDates)?.notePath;
-        
-        if(dayPlannerExists && activeDayPlannerPath !== filePath){
-          new Notification('Day Planner exists', {silent: true, body: `A Day Planner for today already exists in ${activeDayPlannerPath}`});
-          return;
-        }
-        if(!dayPlannerExists){
-          this.settings.notesToDates = [];
-          this.settings.notesToDates.push(new NoteForDate(filePath, new Date().toDateString()));
-          await this.saveData(this.settings);
-        }
-        if(insertTemplate) {
-          this.plannerMD.insertPlanner();
-        }
-      } catch (error) {
-        console.error(error);
-      }
-    }
+    const deleteTimeBlock = createDeleteTimeBlockHandler({
+      getSettings: this.getSettings,
+      periodicNotes: this.periodicNotes,
+      transactionWriter: this.transactionWriter,
+      onConfirmed: this.undoNotice.show,
+    });
 
-    async unlinkDayPlanner() {
-      try {
-        const activePlanner = this.notesForDatesQuery.active(this.settings.notesToDates);
-        this.settings.notesToDates.remove(activePlanner);
-        await this.saveData(this.settings);
-        await this.loadData();
-        this.statusBar.hide(this.statusBar.statusBar);
-        this.timelineView && this.timelineView.update(new PlanSummaryData([]));
-        new Notification('Day Planner reset', 
-          {silent: true, body: `The Day Planner for today has been dissociated from ${activePlanner.notePath} and can be added to another note`});
-      } catch (error) {
-        console.error(error);
-      }
-    }
-    
-    codeMirror = (file: TAbstractFile) => {
-      if(this.file.hasTodayNote()) {
-        // console.log('Active note found, starting CodeMirror monitoring')
-        this.plannerMD.checkIsDayPlannerEditing();
-      } else {
-        // console.log('No active note, skipping CodeMirror monitoring')
-      }
-    }
-    
-    onunload() {
-      console.log("Unloading Day Planner plugin");
-      this.app.workspace
-      .getLeavesOfType(VIEW_TYPE_TIMELINE)
-      .forEach((leaf) => leaf.detach());
-    }
-    
+    // todo: clean up
+    const editText: ObsidianContext["editText"] = ({
+      initialText,
+      getDescriptionText,
+    }) =>
+      getTextFromUser({
+        app: this.app,
+        initialText,
+        getDescriptionText,
+      });
+
+    const reSync = () => dispatch(icalRefreshRequested());
+
+    const defaultObsidianContext: ObsidianContext = {
+      periodicNotes: this.periodicNotes,
+      openLogEntryEditModal,
+      openTimelineSettingsModal,
+      openClockInOnAnythingModal: this.openClockInOnAnythingModal,
+      logEntryEditor: this.logEntryEditor,
+      editText,
+      editLine,
+      deleteTimeBlock,
+      workspaceFacade: this.workspaceFacade,
+      initWeeklyView: this.initWeeklyLeaf,
+      renderMarkdown: createRenderMarkdown(this.app),
+      toggleCheckboxInFile: this.vaultFacade.toggleCheckboxInFile,
+      editContext,
+      isEditing,
+      showPreview: createShowPreview(this.app),
+      isModPressed,
+      reSync,
+      isOnline,
+      isDarkMode,
+      settingsStore,
+      settingsSignal,
+      pointerDateTime,
+      dispatch,
+      useSelector,
+    };
+
+    const componentContext = new Map<string, ObsidianContext>([
+      [obsidianContextKey, defaultObsidianContext],
+    ]);
+
+    this.registerView(
+      viewTypeTimeline,
+      (leaf: WorkspaceLeaf) =>
+        new TimelineView(
+          leaf,
+          this.settingsStore,
+          componentContext,
+          dateRanges,
+          this.periodicNotes,
+          this.workspaceFacade,
+          this.initWeeklyLeaf,
+          reSync,
+          openTimelineSettingsModal,
+        ),
+    );
+
+    this.registerView(
+      viewTypeMultiDay,
+      (leaf: WorkspaceLeaf) =>
+        new MultiDayView(
+          leaf,
+          this.settingsStore,
+          componentContext,
+          dateRanges,
+        ),
+    );
+
+    this.registerView(
+      viewTypeReleaseNotes,
+      (leaf: WorkspaceLeaf) => new DayPlannerReleaseNotesView(leaf),
+    );
+
+    this.registerView(
+      viewTypeTimeTracker,
+      (leaf: WorkspaceLeaf) => new TimeTrackerView(leaf, componentContext),
+    );
   }
+}

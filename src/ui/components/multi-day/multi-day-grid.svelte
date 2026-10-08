@@ -1,0 +1,371 @@
+<script lang="ts">
+  import { type Moment } from "moment";
+
+  import { getDateRangeContext } from "../../../context/date-range-context";
+  import { getObsidianContext } from "../../../context/obsidian-context";
+  import { isToday } from "../../../global-store/current-time";
+  import { getVisibleHours } from "../../../global-store/derived-settings";
+  import { isLastIndexOf } from "../../../util/array";
+  import { isOnWeekend } from "../../../util/moment";
+  import {
+    getNextAdjacentRange,
+    getNextWorkWeek,
+    getPreviousAdjacentRange,
+    getPreviousWorkWeek,
+  } from "../../../util/range";
+  import * as r from "../../../util/range";
+  import { createResizeState } from "../../actions/create-resize-state";
+  import { createColumnChangeMenu } from "../../column-change-menu";
+  import { createColumnSelectionMenu } from "../../column-selection-menu";
+  import ControlButton from "../control-button.svelte";
+  import ErrorBoundary from "../error-boundary.svelte";
+  import {
+    Settings,
+    ChevronLeft,
+    ChevronRight,
+    CalendarArrowUp,
+    Columns3,
+    GripHorizontal,
+    TableColumnsSplit,
+  } from "../lucide";
+  import Ruler from "../ruler.svelte";
+  import Scroller from "../scroller.svelte";
+  import Timeline from "../timeline.svelte";
+
+  import ColumnTracksOverlay from "./column-tracks-overlay.svelte";
+  import MultiDayRow from "./multi-day-row.svelte";
+
+  const {
+    workspaceFacade,
+    settingsStore,
+    pointerDateTime,
+    editContext,
+    settingsSignal,
+    openTimelineSettingsModal,
+  } = getObsidianContext();
+  const dateRange = getDateRangeContext();
+
+  let timelineInternalColumnCount = $derived.by(() => {
+    const columnFlags = Object.values(settingsSignal.current.timelineColumns);
+
+    return columnFlags.filter(Boolean).length;
+  });
+
+  function getColumnBackgroundColor(day: Moment) {
+    return isOnWeekend(day) ? "var(--background-primary)" : "";
+  }
+
+  let daysRef: HTMLDivElement | undefined;
+  let multiDayRowRef: HTMLDivElement | undefined = $state();
+  let columnTrackOverlayEl: HTMLDivElement | undefined = $state();
+  let rulerRef: HTMLDivElement | undefined = $state();
+
+  function handleScroll(event: Event) {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+
+    if (daysRef) {
+      daysRef.scrollLeft = event.target.scrollLeft;
+    }
+
+    if (multiDayRowRef) {
+      multiDayRowRef.scrollLeft = event.target.scrollLeft;
+    }
+
+    if (columnTrackOverlayEl) {
+      columnTrackOverlayEl.scrollLeft = event.target.scrollLeft;
+    }
+
+    if (rulerRef) {
+      rulerRef.scrollTop = event.target.scrollTop;
+    }
+  }
+
+  function handlePointerMove(event: PointerEvent) {
+    if (!multiDayRowRef) {
+      return;
+    }
+
+    const currentDateRange = dateRange.current;
+
+    const viewportToElOffsetX = multiDayRowRef.getBoundingClientRect().left;
+    const containerWidth = multiDayRowRef.scrollWidth;
+    const totalDays = currentDateRange.length;
+    const pixelsPerDay = containerWidth / totalDays;
+
+    const indexOfDayHoveredOver = Math.floor(
+      (event.clientX - viewportToElOffsetX + multiDayRowRef.scrollLeft) /
+        pixelsPerDay,
+    );
+    const dayHoveredOver = currentDateRange[indexOfDayHoveredOver];
+
+    if (!dayHoveredOver) {
+      return;
+    }
+
+    pointerDateTime.set({
+      dateTime: dayHoveredOver,
+      type: "date",
+    });
+  }
+
+  const { startResizing, resizeContainer } = createResizeState();
+</script>
+
+<ErrorBoundary>
+  <div class="corner">
+    <GripHorizontal
+      class="horizontal-grip"
+      onmousedown={startResizing}
+      ontouchstart={startResizing}
+    />
+  </div>
+
+  <div bind:this={rulerRef} class="ruler">
+    <Ruler
+      --ruler-box-shadow="var(--shadow-right)"
+      visibleHours={getVisibleHours($settingsStore)}
+    />
+    <div class="scrollbar-filler"></div>
+  </div>
+
+  <div
+    bind:this={daysRef}
+    style:--timeline-internal-column-count={timelineInternalColumnCount}
+    class={["planner-header-row", "day-buttons"]}
+  >
+    {#each dateRange.current as day}
+      <div class="header-cell">
+        <ControlButton
+          --border-radius="0"
+          label="Open note for day"
+          onclick={async () => {
+            await workspaceFacade.openFileForDay(day);
+          }}
+        >
+          {#if $isToday(day)}
+            🔵
+          {/if}
+
+          {day.format($settingsStore.timelineDateFormat)}
+        </ControlButton>
+      </div>
+    {/each}
+  </div>
+
+  <div
+    style:--timeline-internal-column-count={timelineInternalColumnCount}
+    class={["planner-header-row", "horizontal-resize-box-wrapper"]}
+    {@attach resizeContainer}
+  >
+    <!--Note: we need this wrapper to listen to pointer events on the whole height of the row-->
+    <div
+      bind:this={multiDayRowRef}
+      class="multi-day-row-wrapper"
+      onpointermove={handlePointerMove}
+      onpointerup={editContext.confirmEdit}
+    >
+      <MultiDayRow />
+    </div>
+    <ColumnTracksOverlay
+      columnCount={dateRange.current.length}
+      bind:el={columnTrackOverlayEl}
+    />
+  </div>
+
+  <div class="multi-day-main-content">
+    <Scroller class="planner-multi-day-scroller" onscroll={handleScroll}>
+      {#each dateRange.current as day, index}
+        <Timeline
+          --column-background-color={getColumnBackgroundColor(day)}
+          --timeline-border-inline-end={isLastIndexOf(dateRange.current, index)
+            ? "none"
+            : "var(--border-base)"}
+          {day}
+          isUnderCursor={true}
+        />
+      {/each}
+    </Scroller>
+
+    <div class="controls-sidebar">
+      <ControlButton label="Settings" onclick={openTimelineSettingsModal}>
+        <Settings />
+      </ControlButton>
+
+      <ControlButton
+        label="Change columns"
+        onclick={(event) => createColumnChangeMenu({ event, settingsStore })}
+      >
+        <Columns3 />
+      </ControlButton>
+
+      <ControlButton
+        label="Configure columns"
+        onclick={(event) => createColumnSelectionMenu({ event, settingsStore })}
+      >
+        <TableColumnsSplit />
+      </ControlButton>
+
+      <ControlButton
+        label="Show current period"
+        onclick={() => {
+          dateRange.set(
+            r.createRange(
+              $settingsStore.multiDayRange,
+              $settingsStore.firstDayOfWeek,
+            ),
+          );
+        }}
+      >
+        <CalendarArrowUp />
+      </ControlButton>
+
+      <ControlButton
+        label="Show next period"
+        onclick={() => {
+          dateRange.update(
+            $settingsStore.multiDayRange === "work-week"
+              ? () => getNextWorkWeek(dateRange.first)
+              : getNextAdjacentRange,
+          );
+        }}
+      >
+        <ChevronRight />
+      </ControlButton>
+
+      <ControlButton
+        label="Show previous period"
+        onclick={() => {
+          dateRange.update(
+            $settingsStore.multiDayRange === "work-week"
+              ? () => getPreviousWorkWeek(dateRange.first)
+              : getPreviousAdjacentRange,
+          );
+        }}
+      >
+        <ChevronLeft />
+      </ControlButton>
+    </div>
+  </div>
+</ErrorBoundary>
+
+<style>
+  :global(.planner-multi-day-scroller) {
+    overflow: auto;
+    flex: 1 0 0;
+  }
+
+  :global(.planner-header-row) {
+    --cell-flex-basis: calc(
+      var(--timeline-flex-basis) * var(--timeline-internal-column-count, 1)
+    );
+
+    z-index: 1000;
+    overflow-x: hidden;
+    display: flex;
+    box-shadow: var(--shadow-bottom);
+  }
+
+  .ruler {
+    z-index: 500;
+    overflow-y: hidden;
+    grid-area: ruler;
+    box-shadow: var(--shadow-bottom);
+  }
+
+  .scrollbar-filler {
+    height: var(--scrollbar-width);
+  }
+
+  :global(.horizontal-grip) {
+    flex: 0 0 auto;
+    color: var(--icon-color);
+    opacity: var(--icon-opacity);
+  }
+
+  :global(.horizontal-grip:hover) {
+    cursor: grab;
+    opacity: var(--icon-opacity-hover);
+  }
+
+  .multi-day-row-wrapper {
+    position: relative;
+    overflow: hidden scroll;
+    display: flex;
+    flex: 1 0 0;
+  }
+
+  .day-buttons {
+    grid-area: dates;
+    font-size: var(--font-ui-small);
+  }
+
+  :global(.horizontal-resize-box-wrapper) {
+    position: relative;
+    grid-area: multiday;
+    max-height: 16vh;
+    border-bottom: var(--border-base);
+  }
+
+  .controls-sidebar {
+    position: absolute;
+    top: 0;
+    right: var(--scrollbar-width);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+    align-self: flex-start;
+
+    padding: var(--size-4-2) var(--size-4-1);
+
+    background-color: var(--background-primary);
+    border-bottom: var(--border-base);
+    border-left: var(--border-base);
+    border-bottom-left-radius: var(--radius-m);
+    box-shadow: var(--input-shadow);
+  }
+
+  .multi-day-main-content {
+    position: relative;
+
+    display: flex;
+    grid-area: timelines;
+    flex-direction: column;
+
+    min-width: 0;
+  }
+
+  .corner {
+    z-index: 1000;
+
+    display: flex;
+    grid-area: corner;
+    flex-direction: column-reverse;
+    align-items: center;
+
+    background-color: var(--background-primary);
+    border-right: var(--border-base);
+    border-bottom: var(--border-base);
+    box-shadow: var(--shadow-bottom);
+  }
+
+  .header-cell {
+    overflow-x: hidden;
+    flex: 1 0 var(--cell-flex-basis);
+
+    width: var(--cell-flex-basis);
+
+    font-weight: var(--font-semibold);
+
+    background-color: var(--background-primary);
+    border-right: var(--border-base);
+    border-bottom: var(--border-base);
+  }
+
+  .header-cell:last-of-type {
+    flex: 1 0 calc(var(--cell-flex-basis) + var(--scrollbar-width));
+    border-right: none;
+  }
+</style>

@@ -1,0 +1,65 @@
+import type { Attachment } from "svelte/attachments";
+import { derived, writable } from "svelte/store";
+
+import { getObsidianContext } from "../../context/obsidian-context";
+import { isListItemSourced, type LocalTimeBlock } from "../../time-block-types";
+
+export function hoverPreview(
+  timeBlock: LocalTimeBlock,
+): Attachment<HTMLElement> {
+  return (el) => {
+    const {
+      isModPressed,
+      showPreview,
+      editContext: { editOperation },
+    } = getObsidianContext();
+
+    let currentEvent: MouseEvent | undefined;
+
+    const hovering = writable(false);
+
+    function handleMouseEnter(event: MouseEvent) {
+      currentEvent = event;
+      hovering.set(true);
+    }
+
+    function handleMouseLeave() {
+      currentEvent = undefined;
+      hovering.set(false);
+    }
+
+    el.addEventListener("mouseenter", handleMouseEnter);
+    el.addEventListener("mouseleave", handleMouseLeave);
+
+    const shouldShowPreview = derived(
+      [isModPressed, hovering, editOperation],
+      ([$isModPressed, $hovering, $editOperation]) =>
+        $isModPressed && $hovering && !$editOperation,
+    );
+
+    const unsubscribe = shouldShowPreview.subscribe((newValue) => {
+      if (!newValue || !currentEvent) {
+        return;
+      }
+
+      if (timeBlock.source === "unwritten") {
+        return;
+      }
+
+      showPreview(
+        el,
+        currentEvent,
+        timeBlock.path,
+        isListItemSourced(timeBlock)
+          ? timeBlock.position.start.line
+          : undefined,
+      );
+    });
+
+    return () => {
+      el.removeEventListener("mouseenter", handleMouseEnter);
+      el.removeEventListener("mouseleave", handleMouseLeave);
+      unsubscribe();
+    };
+  };
+}

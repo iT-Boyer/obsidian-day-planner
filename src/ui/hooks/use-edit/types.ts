@@ -1,0 +1,29 @@
+import type {
+  EditableTimeBlock,
+  TimeInterval,
+  WithDuration,
+} from "../../../time-block-types";
+
+export enum EditMode {
+  DRAG = "DRAG",
+  DRAG_AND_SHIFT_OTHERS = "DRAG_AND_SHIFT_OTHERS",
+  DRAG_AND_SHRINK_OTHERS = "DRAG_AND_SHRINK_OTHERS",
+  RESIZE = "RESIZE",
+  RESIZE_FROM_TOP = "RESIZE_FROM_TOP",
+  RESIZE_AND_SHIFT_OTHERS = "RESIZE_AND_SHIFT_OTHERS",
+  RESIZE_FROM_TOP_AND_SHIFT_OTHERS = "RESIZE_FROM_TOP_AND_SHIFT_OTHERS",
+  RESIZE_AND_SHRINK_OTHERS = "RESIZE_AND_SHRINK_OTHERS",
+  RESIZE_FROM_TOP_AND_SHRINK_OTHERS = "RESIZE_FROM_TOP_AND_SHRINK_OTHERS",
+  CREATE = "CREATE",
+}
+
+export type EditableInterval = TimeInterval & {
+  isAllDayEvent?: boolean;
+};
+
+export interface EditOperation<
+  Block extends EditableInterval = WithDuration<EditableTimeBlock>,
+> {
+  timeBlock: Block;
+  mode: EditMode;
+}

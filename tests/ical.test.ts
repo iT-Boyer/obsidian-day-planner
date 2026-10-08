@@ -1,0 +1,273 @@
+import { readFile } from "fs/promises";
+
+import { type MetadataCache, request, Vault } from "obsidian";
+import { beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
+
+import { icalParseLowerLimit } from "../src/constants";
+import { initialState as initialDateRangesState } from "../src/redux/date-ranges-slice";
+import {
+  icalRefreshRequested,
+  selectRemoteTimeBlocks,
+} from "../src/redux/ical/ical-slice";
+import { type IcalParseTaskResult } from "../src/redux/ical/init-ical-listeners";
+import { initListenerMiddleware } from "../src/redux/listener-middleware";
+import { makeStore, type RootState } from "../src/redux/store";
+import { createIndexServices } from "../src/service/index/create-index-services";
+import { ListPropsParser } from "../src/service/list-props-parser";
+import type { PeriodicNotes } from "../src/service/periodic-notes";
+import { defaultSettingsForTests } from "../src/settings";
+import { createBackgroundBatchScheduler } from "../src/util/scheduler";
+
+import {
+  FakeMetadataCache,
+  FakePeriodicNotes,
+  InMemoryVault,
+} from "./util/fakes";
+
+vi.mock("obsidian", () => ({
+  request: vi.fn(),
+}));
+
+const defaultVisibleDays = ["2024-09-26"];
+
+export async function getIcalFixture(file: string) {
+  return readFile(`fixtures/${file}.txt`, {
+    encoding: "utf8",
+  });
+}
+
+const defaultPreloadedStateForTests: Partial<RootState> = {
+  dateRanges: {
+    ...initialDateRangesState,
+    ranges: { testRange: defaultVisibleDays },
+  },
+  settings: {
+    settings: {
+      ...defaultSettingsForTests,
+      icals: [
+        {
+          name: "Test",
+          url: "https://example.com",
+          color: "#ff0000",
+          email: "bishop1860@gmail.com",
+        },
+      ],
+    },
+  },
+};
+
+function makeStoreForTests(props?: { preloadedState?: Partial<RootState> }) {
+  const { preloadedState = defaultPreloadedStateForTests } = props || {};
+
+  const icalParseScheduler =
+    createBackgroundBatchScheduler<IcalParseTaskResult>({
+      timeRemainingLowerLimit: icalParseLowerLimit,
+    });
+
+  onTestFinished(() => icalParseScheduler.cancelTasks());
+
+  const inMemoryVault = new InMemoryVault([]) as unknown as Vault;
+  const metadataCache = new FakeMetadataCache({}) as unknown as MetadataCache;
+  const periodicNotes = new FakePeriodicNotes([]) as unknown as PeriodicNotes;
+  const listPropsParser = new ListPropsParser(inMemoryVault, metadataCache);
+
+  const listenerMiddleware = initListenerMiddleware({
+    extra: {
+      listPropsParser,
+      indexServices: createIndexServices({
+        listPropsParser,
+        periodicNotes,
+        settings: defaultSettingsForTests,
+      }),
+      vault: inMemoryVault,
+      metadataCache,
+      periodicNotes,
+      settings: defaultSettingsForTests,
+      icalParseScheduler,
+    },
+  });
+
+  return makeStore({
+    preloadedState,
+    middleware: (getDefaultMiddleware) => {
+      return getDefaultMiddleware().concat(listenerMiddleware.middleware);
+    },
+  });
+}
+
+async function setUp(props: {
+  icalFixtureFileName: string;
+  visibleDays?: string[];
+}) {
+  const { icalFixtureFileName, visibleDays = defaultVisibleDays } = props;
+
+  vi.mocked(request).mockReturnValue(getIcalFixture(icalFixtureFileName));
+
+  const { dispatch, getState } = makeStoreForTests({
+    preloadedState: {
+      ...defaultPreloadedStateForTests,
+      dateRanges: {
+        ...initialDateRangesState,
+        ranges: { testRange: visibleDays },
+      },
+    },
+  });
+
+  dispatch(icalRefreshRequested());
+
+  await vi.waitUntil(() => selectRemoteTimeBlocks(getState()).length > 0);
+
+  return {
+    remoteTimeBlocks: selectRemoteTimeBlocks(getState()),
+    dispatch,
+    getState,
+  };
+}
+
+describe("ical", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test("Tasks contain RSVP status, description, location", async () => {
+    const { remoteTimeBlocks } = await setUp({
+      icalFixtureFileName: "google-tentative-attendee",
+      visibleDays: ["2024-09-26"],
+    });
+
+    expect(remoteTimeBlocks).toEqual([
+      expect.objectContaining({
+        summary: "tentative-status",
+        description: "tentative-description",
+        location: "Mount Everest",
+        rsvpStatus: "TENTATIVE",
+      }),
+    ]);
+  });
+
+  // NOTE: Microsoft doesn't contain Attendee field
+  test.todo(
+    "RSVP status gets pulled from params if email is not in CN (common name)",
+  );
+
+  test("Falls back on previous values if fetching a calendar fails", async () => {
+    const { dispatch, getState } = await setUp({
+      icalFixtureFileName: "google-tentative-attendee",
+    });
+
+    vi.mocked(request).mockImplementationOnce(() => {
+      throw new Error("Request failed");
+    });
+
+    dispatch(icalRefreshRequested());
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    const remoteTimeBlocks = selectRemoteTimeBlocks(getState());
+
+    expect(remoteTimeBlocks).toHaveLength(1);
+  });
+
+  test.each([
+    ["2024-10-15", "2024-10-16"],
+    ["2024-10-11", "2024-10-12"],
+  ])(
+    "Shows multi-day tasks that start before or after the visible range, row $#",
+    async (...visibleDays) => {
+      const { remoteTimeBlocks } = await setUp({
+        icalFixtureFileName: "google-event-stretching-5-days",
+        visibleDays,
+      });
+
+      expect(remoteTimeBlocks).toHaveLength(1);
+    },
+  );
+
+  test("Events don't get duplicated if they fall within 2 separate ranges", async () => {
+    const { remoteTimeBlocks } = await setUp({
+      icalFixtureFileName: "google-event-stretching-5-days",
+      visibleDays: ["2024-10-12", "2024-10-16"],
+    });
+
+    expect(remoteTimeBlocks).toHaveLength(1);
+  });
+
+  // TODO: check out https://github.com/jens-maus/node-ical/issues/36
+  //  this odd behavior comes from the 'fix' to that bug
+  //  need to avoid this:`["2025-03-26T00:00:00.000Z", "2025-03-27T23:00:00.000Z"]`
+  test.skip("A recurrent 2-day event spans exactly 2 days", async () => {
+    const { remoteTimeBlocks } = await setUp({
+      icalFixtureFileName: "google-2-day-event-every-wed",
+      visibleDays: [
+        "2025-04-07",
+        "2025-04-08",
+        "2025-04-09",
+        "2025-04-10",
+        "2025-04-11",
+      ],
+    });
+
+    expect(remoteTimeBlocks).toEqual([
+      expect.objectContaining({
+        durationMinutes: 60 * 24 * 2,
+      }),
+    ]);
+  });
+
+  test.skip("Deleted recurrences don't show up as tasks", async () => {
+    const { remoteTimeBlocks } = await setUp({
+      icalFixtureFileName: "google-deleted-recurrence",
+      visibleDays: ["2025-04-09", "2025-04-10", "2025-04-11"],
+    });
+
+    expect(remoteTimeBlocks).toHaveLength(2);
+
+    expect(remoteTimeBlocks[0]?.startTime).toEqual(
+      window.moment("2025-04-09T00:00:00.000Z"),
+    );
+    expect(remoteTimeBlocks[1]?.startTime).toEqual(
+      window.moment("2025-04-11T00:00:00.000Z"),
+    );
+  });
+
+  test.skip("Yearly recurrences do not show up every month", async () => {
+    const { remoteTimeBlocks } = await setUp({
+      icalFixtureFileName: "google-yearly-recurrence",
+      visibleDays: [
+        "2025-04-09",
+        "2025-05-08",
+        "2025-05-09",
+        "2025-05-10",
+        "2026-04-08",
+        "2026-04-09",
+        "2026-04-10",
+      ],
+    });
+
+    expect(remoteTimeBlocks).toHaveLength(2);
+
+    expect(remoteTimeBlocks[0]?.startTime).toEqual(
+      window.moment("2025-04-09T00:00:00.000Z"),
+    );
+    expect(remoteTimeBlocks[1]?.startTime).toEqual(
+      window.moment("2026-04-09T00:00:00.000Z"),
+    );
+  });
+
+  test("Last visible day is inclusive, i.e. events happening on the last day of the range get displayed", async () => {
+    const { remoteTimeBlocks } = await setUp({
+      icalFixtureFileName: "google-recurring-with-exception-and-location",
+      visibleDays: ["2024-09-29"],
+    });
+
+    expect(remoteTimeBlocks).toHaveLength(1);
+  });
+
+  test.todo("Recurring workday all-day tasks do not show up on Sunday");
+
+  // NOTE: this test will break on the newest version of node-ical, so we'll need it
+  test.todo("Recurrences show up at the same time as the original task");
+
+  describe("Daylight savings time", () => {
+    test.todo("Base case");
+  });
+});

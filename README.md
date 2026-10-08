@@ -1,250 +1,201 @@
-# Day Planner
+<div style="display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; margin: 20px;">
+  <div style="font-size: 0.9em;">
+    <a href="https://github.com/ivan-lednev/obsidian-day-planner/issues?q=is%3Aissue+is%3Aopen+sort%3Areactions-%2B1-desc">Vote on issues</a>
+    · <a href="https://github.com/ivan-lednev/obsidian-day-planner/issues">Report a bug or suggest a feature</a>
+    · <a href="https://github.com/ivan-lednev/obsidian-day-planner/discussions/new?category=q-a">Ask a question</a>
+    · <a href="./CONTRIBUTING.md">Contribute code</a>
+  </div>
 
-![GitHub Workflow Status](https://img.shields.io/github/workflow/status/lynchjames/obsidian-day-planner/Release%20Build?logo=github&style=for-the-badge) ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/lynchjames/obsidian-day-planner?style=for-the-badge&sort=semver)
+  <div>Day Planner is free for everyone. If it helps you plan your days, please consider supporting its development.</div>
+
+  <a href="https://www.buymeacoffee.com/machineelf">
+    <img
+      src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+      alt="Buy Me A Coffee"
+      style="height: 60px !important; width: 217px !important;"
+    >
+  </a>
+
+</div>
 
 
-This repository contains a plugin for [Obsidian](https://obsidian.md/) for day planning and managing pomodoro timers from a task list in a Markdown note. 
 
-> This is an early alpha of version of the plugin and it will be running constantly in the background while Obsidian is open and the plugin is enabled. **Please try the plugin in a test vault first, and, most importantly, make sure you have your notes backed up in cloud storage or Git.**
-    
-## Features
+<img src="./assets/hero-daily.png" width="100%">
+<img src="./assets/hero-weekly.png" width="100%">
 
-- Generate a day planner for you each day or create a day planner in any note you choose.
-- Status bar updates on progress with information on your current and next tasks. You can click on the status bar to access the note for today's day planner.
-- Mermaid Gantt chart automatically generated from your tasks and included in you day planner note.
-- Timeline view showing your tasks laid out on a vertical timeline.
+Day Planner is a community plugin for [Obsidian](https://obsidian.md/). It adds editable calendar views and basic time-tracking. Day Planner is integrated with
 
-![Day Planner Demo Image](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/day-planner-note-preview.png)
+- The core Daily Notes plugin.
+- [the Tasks plugin](https://obsidian.md/plugins?id=obsidian-tasks-plugin)
+- Online calendars
 
-## Usage
+## Table of contents
 
-Once installed, the plugin will create a folder called Day Planners in the root of your vault. A note for today will automatically be created with the file name format `Day Planners/Day Planner-YYYYMMDD.md`.
+- [Table of contents](#table-of-contents)
+- [How to use it](#how-to-use-it)
+  - [1. Showing events from your daily notes](#1-showing-events-from-your-daily-notes)
+  - [2. tasks community plugin integration, showing events from other files in your vault](#2-tasks-community-plugin-integration-showing-events-from-other-files-in-your-vault)
+  - [3. Showing internet calendars](#3-showing-internet-calendars)
+    - [Where to get a Google Calendar link](#where-to-get-a-google-calendar-link)
+    - [Where to get an iCloud link](#where-to-get-an-icloud-link)
+    - [Where to get an Outlook link](#where-to-get-an-outlook-link)
+      - [Alternative](#alternative)
+  - [4. Time tracking](#4-time-tracking)
+    - [Recording clocks](#recording-clocks)
+    - [Clocks in timelines](#clocks-in-timelines)
+    - [Active clocks](#active-clocks)
+    - [Limitations](#limitations)
+- [Note on the old plugin version](#note-on-the-old-plugin-version)
+- [Acknowledgements](#acknowledgements)
 
-You can choose to use the [Command Mode](#day-planner-mode) instead to add a Day Planner for the current day to any note.
+## How to use it
 
-### Day Planner Note
+To open the timeline in the sidebar:
 
-Within the note, you can create a check list with times and tasks which will be automatically be tracked during the day. You can now include headings and other content between tasks. Here is an example:
+- Either run the command: `Show Timeline`
+- Or click the timeline icon in the left ribbon
+  - ![](./assets/open-timeline-ribbon-icon.png)
 
-```markdown
-## Day Planner
+To open multi-day planner:
 
-This is my plan for the day broken into 3 main sections:
-1. Morning Prep
-2. Reading
-3. Afternoon Review
+- Either run the command: `Show multi-day planner`
+- Or click on the icon in the left ribbon:
+  - ![](./assets/open-multi-day-view-ribbon-icon.png)
 
-### Morning Prep
+You can overview the upcoming 3 hours in the mini-timeline in the status bar:
 
-This is where I get ready for work and do my usual prep.
+<img src="./assets/mini-timeline-demo.png" width="100%">
 
-- [ ] 09:30 Setup for work
-- [ ] 09:45 Review notes from yesterday
-- [ ] 10:30 Create new notes for #article review
-- [ ] 11:30 BREAK
+If there are remote tasks, the blocks will be colored accordingly.
 
-### Reading
+The plugin can display records from different sources:
 
-A section of the day dedicated to reading:
+1. Daily notes
+2. Obsidian-tasks
+3. Online calendars
+4. Dataview clock properties
 
-1. Articles.
-2. Book chapters assigned for the day.
-3. Re-reading past notes.
-   
-- [ ] 12:00 Reading
-  - [ ] Article 1
-  - [ ] Article 2
-  - [ ] Article notes review
-- [ ] 12:25 BREAK
-- [ ] 12:30 Reading
-- [ ] 14:00 BREAK
+Let's go over each one of them.
 
-### Afternoon Review
+### 1. Showing events from your daily notes
 
-I use this time to review what I have done earlier in the day and complete any tasks to prepare for the next day.
+> [!Warning]
+> Either the core 'Daily Notes' (core plugin) or the 'Periodic Notes' (community plugin, [see in Obsidian](obsidian://show-plugin?id=periodic-notes)) should be enabled. This is what allows day-planner to 'see' and interact with your daily notes.
 
-- [ ] 15:00 Review notes and update daily note [[20201103]]
-- [ ] 15:45 Walk
-- [ ] 16:30 Reading
-- [ ] 17:20 Prep for tomorrow's meetings
-- [ ] 18:00 END
+Write your tasks in a daily note, and they show up on the timeline:
+
+```md
+# Day planner
+
+- [ ] 10:00 - 10:30 Wake up
+- [ ] 11:00 - 12:30 Grab a brush and put a little make-up
 ```
 
-This is also provided as a file in [day-planner-example.md](https://github.com/lynchjames/obsidian-day-planner/blob/main/examples/day-planner-example.md).
+### 2. [tasks community plugin](obsidian://show-plugin?id=obsidian-tasks-plugin) integration, showing events from other files in your vault
 
-The Day Planner heading and `---` rule are used to identify the extent of the Day Planner. A heading must be used but can be `#`, `##`, `###` or `####`.
+You can see tasks anywhere in the vault with dates added by the [tasks community plugin](obsidian://show-plugin?id=obsidian-tasks-plugin). This also works out of the box for all the files in the vault. You only need to add the `scheduled` property to a task in one of the formats:
 
-The format of the task list items is important as this is what is used to calculate the times of each task and the intervals between tasks. The format used should be:
+- Shorthand, added by [tasks community plugin](obsidian://show-plugin?id=obsidian-tasks-plugin): `⏳ 2021-08-29`
+  - Note that this plugin has a handy modal for adding these properties
+- Full Dataview-like property: `[scheduled:: 2021-08-29]`
+- Another Dataview format: `(scheduled:: 2021-08-29)`.
 
- `- [ ] HH:mm Task text` 
- 
- **24 hour times should be used.** 
+For example, these tasks will show up in the timeline:
 
- Nested checklist items or bullets are now also supported to capture sub-tasks of a timed task. Timed tasks must be at the top level of the checkbox list.
-
- `BREAK` and `END` are keywords that define breaks and the end to the time tracking for the tasks. They are not case sensitive so `break` and `end` can also be used. Both `BREAK` and `END` keywords are configurable and can be customized in Day Planner settings tab.
-
- `END` is used as an item with a time to give an accurate time interval for the last task, *"Prep for tomorrow's meetings"* at 17:00 in this example.
-
- The note will update automatically: tasks in the past will be checked and marked as complete.
-
-Using the example above, at 14:30 the note would have automatically updated to:
-
-```markdown
-## Day Planner
-
-This is my plan for the day broken into 3 main sections:
-1. Morning Prep
-2. Reading
-3. Afternoon Review
-
-### Morning Prep
-
-This is where I get ready for work and do my usual prep.
-
-- [x] 09:30 Setup for work
-- [x] 09:45 Review notes from yesterday
-- [x] 10:30 Create new notes for #article review
-- [x] 11:30 BREAK
-
-### Reading
-
-A section of the day dedicated to reading:
-
-1. Articles.
-2. Book chapters assigned for the day.
-3. Re-reading past notes.
-   
-- [x] 12:00 Reading
-  - [ ] Article 1
-  - [ ] Article 2
-  - [ ] Article notes review
-- [x] 12:25 BREAK
-- [x] 12:30 Reading
-- [ ] 14:00 BREAK
-
-### Afternoon Review
-
-I use this time to review what I have done earlier in the day and complete any tasks to prepare for the next day.
-
-- [ ] 15:00 Review notes and update daily note [[20201103]]
-- [ ] 15:45 Walk
-- [ ] 16:30 Reading
-- [ ] 17:20 Prep for tomorrow's meetings
-- [ ] 18:00 END
+```md
+- [ ] #task 08:00 - 10:00 This task uses the shorthand format ⏳ 2021-08-29
+- [ ] #task 11:00 - 13:00 This task uses the Dataview property format [scheduled:: 2021-08-29]
 ```
 
-### Timeline View
+### 3. Showing internet calendars
 
-The `Show the Day Planner Timeline` command can be used to add a vertical timeline view display the tasks for today's Day Planner with a line showing the current time.
+To show events from internet calendars like **Google Calendar, iCloud Calendar and Outlook** you only need to add an ICS link in the plugin settings.
 
-![Day Planner Timeline](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/day-planner-timeline.png)
+![](./assets/ical-settings-demo.png)
 
-### Status Bar
+#### Where to get a Google Calendar link
 
-The status bar in Obsidian will also show the current progress on the task or break with the time remaining. Clicking on the status bar item will take you to the Day Planner note.
+> [!Warning]
+> Make sure you copy the right link! It should end with `.ics`, otherwise, you won't see your events!
 
-#### Task Status
+[Google Calendar instructions](https://support.google.com/calendar/answer/37648?hl=en#zippy=%2Csync-your-google-calendar-view-edit%2Cget-your-calendar-view-only)
 
-The status displayed when there is an active task:
+#### Where to get an iCloud link
 
-![Task Status](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/task-status.png)
+[iCloud Calendar instructions](https://www.souladvisor.com/help-centre/how-to-get-icloud-calendar-address-on-mac-in-ical-format)
 
-#### Break Status
+#### Where to get an Outlook link
 
-The status displayed during a break:
+[Outlook Calendar instructions](https://support.microsoft.com/en-us/office/introduction-to-publishing-internet-calendars-a25e68d6-695a-41c6-a701-103d44ba151d?ui=en-us&rs=en-us&ad=us)
 
-![Break Status](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/break-status.png)
+Here's the relevant part:
 
-#### End Status
+> Under the settings in Outlook **on the web**, go to Calendar > Shared calendars. Choose the calendar you wish to publish and the level of details that you want others to see.
 
-The status displayed when the end of the tasks is reached:
+Here's how the settings look on the web version:
+![](./assets/outlook-guide-1.png)
 
-![End Status](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/end-status.png)
+##### Alternative
 
-## Configuration
+If your organization doesn't let you share your calendar this way, you might try [a different way described in this issue](https://github.com/ivan-lednev/obsidian-day-planner/issues/395).
 
-### Day Planner Mode
+### 4. Time tracking
 
-There are 2 modes to use the Day Planner plugin:
+> [!Warning]
+> This feature is experimental and can break or change at any time in the near future. You can help to shape this feature by providing your feedback.
 
-**File mode**
+You can record time spent on tasks in the form of Dataview properties and then view the records as time blocks, much like planner entries.
 
-The plugin automatically generates day planner notes for each day within a Day Planners folder.
+#### Recording clocks
 
-**Command mode**
+Start a clock by right-clicking on a task in the editor:
 
-Commands are used to insert a Day Planner for today within any note as well as unlinking the Day Planner for today from its current note.
+<img src="./assets/clock-in-demo.png" width="75%">
 
->Note: To add the Day Planner to the current note you first need to Link the Day Planner to the current note by running either one of the commands "Day Planner: Link today's Day Planner to the current Note" or "Day Planner: Add a Day Planner template for today to the current note" from the command palette.
+Stop the clock to record the time spent on a task or cancel it to discard the record:
 
-The Day Planner can be placed anywhere within a note as long as the format provided is used. Only the Day Planner section of the note will be updated as time progresses.
+<img src="./assets/clock-out-demo.png" width="75%">
 
-### Complete Past Planner Items
+There is a command for each of the menu items, available in the command palette or as a hotkey:
 
-You can choose whether the plugin will automatically mark planner items in the past as complete or allow you to tick them off yourself.
+<img src="./assets/clock-commands-demo.png" width="75%">
 
-### Mermaid Gantt
+#### Clocks in timelines
 
-You can choose to include a dynamically generated [Mermaid Gantt chart](https://mermaid-js.github.io/mermaid/#/gantt) in your Day Planner.
+You can enable an additional timeline column to see the recorded clocks next to your planner:
 
-Tasks and breaks will be displayed in separate sections to help visualise your plan for the day.
+<img src="./assets/show-time-tracker-settings.png" width="75%">
 
-![Mermaid Gantt Chart Example](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/mermaid-gantt.png)
+Right click (or tap and hold on mobile) a clock block to open its control menu:
 
-Colors for the gantt chart can be overridden with custom CSS and there is [Mermaid documentation](https://mermaid-js.github.io/mermaid/#/gantt?id=styling) on the classes. A CSS file with examples for the task and breaks sections is provided:
+- An active clock can be clocked out, edited or canceled
+- A completed clock can be resumed, edited or deleted
 
-[mermaid-gantt-example.css](examples/mermaid-gantt-example.css)
+#### Active clocks
 
-### Status Bar - Circular Progress
+You can see the currently active clocks in the timeline sidebar:
 
-You can choose to display progress in the status bar with a circular pie chart progress bar to save horizontal space.
+<img src="./assets/active-clocks-demo.png" width="75%">
 
-![Circular Progress Bar](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/circular-progress.png)
+A right click on an active clock will bring the control menu:
 
-### Status Bar - Now and Next
+<img src="./assets/active-clocks-menu.png" width="75%">
 
-You can choose to display the time and start of the text for the current and next task.
+#### Limitations
 
-![Now and Next](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/now-and-next.png)
+- Clock time blocks cannot be edited by dragging yet. Use the context menu to edit clock times.
 
-### Task Notification
+## Note on the old plugin version
 
-You can choose to have an in-app notification display when a new task starts.
+0.7.0 significantly changes what the plugin looks like and what it does. If you like to have some of the old behaviors back, [consider creating an issue](https://github.com/ivan-lednev/obsidian-day-planner/issues).
 
-### Timeline Zoom Level
+If for some reason you still want to use the old version, there are community forks, which you can use via [BRAT](https://github.com/TfTHacker/obsidian42-brat). [Here is one such fork](https://github.com/ebullient/obsidian-day-planner-og).
 
-This is the zoom level to dispaly the timeline. The higher the number, the more vertical space each task will take up.
+## Acknowledgements
 
-## Commands
-
-Using the plugin in command mode, 2 commands are available to link and unlink a Day Planner.
-
-![Plugin Commands](https://raw.githubusercontent.com/lynchjames/obsidian-day-planner/main/images/commands.png)
-
-## Compatibility
-
-Custom plugins are only available for Obsidian v0.9.7+.
-
-The current API of this repo targets Obsidian **v0.9.10**. 
-
-## Installing
-
-As of version [0.9.7 of Obsidian](https://forum.obsidian.md/t/obsidian-release-v0-9-7-insider-build/7628), this plugin is available to be installed directly from within the app. The plugin can be found in the Community Plugins directory which can be accessed from the Settings pane under Third Party Plugins.
-
-## Manual installation
-
-1. Download the [latest release](https://github.com/lynchjames/obsidian-day-planner/releases/latest)
-1. Extract the obsidian-day-planner folder from the zip to your vault's plugins folder: `<vault>/.obsidian/plugins/`  
-Note: On some machines the `.obsidian` folder may be hidden. On MacOS you should be able to press `Command+Shift+Dot` to show the folder in Finder.
-1. Reload Obsidian
-1. If prompted about Safe Mode, you can disable safe mode and enable the plugin.
-
-## For developers
-Pull requests are both welcome and appreciated. 😀
-
-If you would like to contribute to the development of this plugin, please follow the guidelines provided in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Donating
-
-This plugin is provided free of charge. If you would like to donate something to me, you can via [PayPal](https://paypal.me/lynchjames2020). Thank you!
+- Thanks to [Michael Brenan](https://github.com/blacksmithgu) for Dataview
+- Thanks to [James Lynch](https://github.com/lynchjames) for the original plugin
+- Thanks to [Joshua Tazman Reinier](https://github.com/joshuatazrein) for his plugin that served as an inspiration
+- Thanks to @liamcain for creating daily note utilities and a helpful calendar plugin
+- Thanks to [Emacs Org Mode](https://orgmode.org/) for an idea of text-based time-tracking
+- Thanks to [Toggl Track](https://track.toggl.com/timer) for an idea of a great time-tracking UI

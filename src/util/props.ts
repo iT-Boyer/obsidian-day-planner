@@ -1,0 +1,283 @@
+import { Array, Either, pipe } from "effect";
+import { stringifyYaml } from "obsidian";
+import { isNotVoid } from "typed-assert";
+import { z } from "zod";
+
+import { clockFormat, codeFence } from "../constants";
+import {
+  keylessScheduledPropRegExp,
+  propRegexp,
+  scheduledPropRegExp,
+  shortScheduledPropRegExp,
+} from "../regexp";
+
+import {
+  createCodeBlock,
+  createIndentation,
+  getIndentationForListParagraph,
+  indent,
+} from "./markdown";
+import { strictParse } from "./moment";
+import { appendText } from "./time-block-utils";
+
+const dateTimeSchema = z.string().refine((it) => strictParse(it).isValid());
+
+const logEntrySchema = z.object({
+  start: dateTimeSchema,
+  end: dateTimeSchema.optional(),
+});
+
+export type LogEntry = z.infer<typeof logEntrySchema>;
+
+const plannerSchema = z.object({
+  log: z.array(logEntrySchema).optional(),
+});
+
+export const propsSchema = z.looseObject({
+  planner: plannerSchema.optional(),
+});
+
+export type Props = z.infer<typeof propsSchema>;
+
+export function isWithOpenClock(props?: Props) {
+  return Boolean(props?.planner?.log?.find((it) => !it.end));
+}
+
+export function createPropsWithOpenClock(): Props {
+  return {
+    planner: {
+      log: [
+        {
+          start: window.moment().format(clockFormat),
+        },
+      ],
+    },
+  };
+}
+
+export function addOpenClock(props: Props): Props {
+  if (isWithOpenClock(props)) {
+    throw new Error("There is already an open clock");
+  }
+
+  return {
+    ...props,
+    planner: {
+      ...props.planner,
+      log: [
+        ...(props.planner?.log || []),
+        {
+          start: window.moment().format(clockFormat),
+        },
+      ],
+    },
+  };
+}
+
+export function addOpenClockOrCreateProps(props?: Props): Props {
+  return props ? addOpenClock(props) : createPropsWithOpenClock();
+}
+
+export function cancelOpenClock(props: Props): Props {
+  if (!props.planner?.log) {
+    throw new Error("There is no log");
+  }
+
+  const openClockIndex = props.planner.log.findIndex((it) => !it.end);
+
+  if (openClockIndex === -1) {
+    throw new Error("There is no open clock");
+  }
+
+  return {
+    ...props,
+    planner: {
+      ...props.planner,
+      log: props.planner.log.toSpliced(openClockIndex, 1),
+    },
+  };
+}
+
+export function clockOut(props: Props): Props {
+  if (!props.planner?.log) {
+    throw new Error("There is no log under cursor");
+  }
+
+  const openClockIndex = props.planner.log.findIndex((it) => !it.end);
+
+  if (openClockIndex === -1) {
+    throw new Error("There is no open clock");
+  }
+
+  const openClock = props.planner.log[openClockIndex];
+
+  isNotVoid(openClock);
+
+  const updatedOpenClock = {
+    ...openClock,
+    end: window.moment().format(clockFormat),
+  };
+
+  return {
+    ...props,
+    planner: {
+      ...props.planner,
+      log: props.planner.log.with(openClockIndex, updatedOpenClock),
+    },
+  };
+}
+
+export function editLogEntry(
+  props: Props,
+  {
+    originalStart,
+    patch,
+  }: { originalStart: string; patch: { start?: string; end?: string } },
+): Props {
+  const log = props.planner?.log;
+
+  if (!log) {
+    throw new Error("No log entries");
+  }
+
+  const index = log.findIndex((it) => it.start === originalStart);
+
+  if (index === -1) {
+    throw new Error(`Log entry not found: ${originalStart}`);
+  }
+
+  const entry = log[index];
+
+  isNotVoid(entry);
+
+  const updatedEntry = { ...entry };
+
+  if (patch.start !== undefined) {
+    updatedEntry.start = patch.start;
+  }
+
+  if (patch.end !== undefined) {
+    updatedEntry.end = patch.end;
+  }
+
+  return {
+    ...props,
+    planner: {
+      ...props.planner,
+      log: log.with(index, updatedEntry),
+    },
+  };
+}
+
+export function deleteLogEntry(props: Props, originalStart: string): Props {
+  const log = props.planner?.log;
+
+  if (!log) {
+    throw new Error("No log entries");
+  }
+
+  const index = log.findIndex((it) => it.start === originalStart);
+
+  if (index === -1) {
+    throw new Error(`Log entry not found: ${originalStart}`);
+  }
+
+  return {
+    ...props,
+    planner: {
+      ...props.planner,
+      log: log.toSpliced(index, 1),
+    },
+  };
+}
+
+export function editLastLogEntry(
+  props: Props,
+  patch: { start?: string; end?: string },
+): Props {
+  const log = props.planner?.log;
+
+  if (!log?.length) {
+    throw new Error("No log entries");
+  }
+
+  const last = log.at(-1);
+
+  isNotVoid(last);
+
+  return editLogEntry(props, { originalStart: last.start, patch });
+}
+
+export function createProp(
+  key: string,
+  value: string,
+  type: "default" | "keyless" = "default",
+) {
+  if (type === "default") {
+    return `[${key}::${value}]`;
+  }
+
+  return `(${key}::${value})`;
+}
+
+export function updateProp(
+  line: string,
+  updateFn: (previous: string) => string,
+) {
+  const match = [...line.matchAll(propRegexp)];
+
+  if (match.length === 0) {
+    throw new Error(`Did not find a prop in line: '${line}'`);
+  }
+
+  const captureGroups = match[0];
+
+  isNotVoid(captureGroups);
+
+  const [, key, previousValue] = captureGroups;
+
+  isNotVoid(previousValue);
+
+  return `[${key}::${updateFn(previousValue)}]`;
+}
+
+export function deleteProps(text: string) {
+  return Array.takeWhile(
+    text.split("\n"),
+    (line) => !line.trimStart().startsWith(codeFence),
+  )
+    .join("\n")
+    .replaceAll(propRegexp, "")
+    .trim();
+}
+
+export function updateScheduledPropInText(text: string, dayKey: string) {
+  return text
+    .replace(shortScheduledPropRegExp, `$1${dayKey}`)
+    .replace(scheduledPropRegExp, `$1${dayKey}$3`)
+    .replace(keylessScheduledPropRegExp, `$1${dayKey}$3`);
+}
+
+export function addTasksPluginProp(text: string, prop: string) {
+  return appendText(text, ` ${prop}`);
+}
+
+export function toIndentedMarkdown(props: Props, column: number) {
+  const indentation =
+    createIndentation(column) + getIndentationForListParagraph();
+
+  return pipe(
+    Either.try({
+      try: () => stringifyYaml(props),
+      catch: (error) =>
+        new Error("Unable to stringify props", { cause: error }),
+    }),
+    Either.map((stringified) =>
+      createCodeBlock({
+        language: "yaml",
+        text: stringified,
+      }),
+    ),
+    Either.map((codeBlock) => indent(codeBlock, indentation)),
+  );
+}

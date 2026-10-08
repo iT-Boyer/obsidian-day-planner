@@ -1,0 +1,34 @@
+// @ts-nocheck TODO: remove this once we raise Lucide version
+import * as lucideSvelte from "lucide-svelte";
+import type { Component, ComponentProps } from "svelte";
+
+const obsidianIcon =
+  <T extends Component>(IconComponent: T) =>
+  (internals: unknown, props: ComponentProps<T>) => {
+    const newProps = {
+      ...props,
+      ["class"]: `${props.class || ""} svg-icon`,
+    };
+
+    return IconComponent(internals, newProps);
+  };
+
+export const Ellipsis = obsidianIcon(lucideSvelte.Ellipsis);
+export const EllipsisVertical = obsidianIcon(lucideSvelte.EllipsisVertical);
+export const Settings = obsidianIcon(lucideSvelte.Settings);
+export const ChevronLeft = obsidianIcon(lucideSvelte.ChevronLeft);
+export const ChevronRight = obsidianIcon(lucideSvelte.ChevronRight);
+export const CalendarArrowUp = obsidianIcon(lucideSvelte.CalendarArrowUp);
+export const Columns3 = obsidianIcon(lucideSvelte.Columns3);
+export const TableColumnsSplit = obsidianIcon(lucideSvelte.TableColumnsSplit);
+export const Search = obsidianIcon(lucideSvelte.Search);
+export const AlertTriangle = obsidianIcon(lucideSvelte.AlertTriangle);
+export const Info = obsidianIcon(lucideSvelte.Info);
+export const Zap = obsidianIcon(lucideSvelte.Zap);
+export const RefreshCwOff = obsidianIcon(lucideSvelte.RefreshCwOff);
+export const GripHorizontal = obsidianIcon(lucideSvelte.GripHorizontal);
+export const Play = obsidianIcon(lucideSvelte.Play);
+export const SkipForward = obsidianIcon(lucideSvelte.SkipForward);
+export const StepForward = obsidianIcon(lucideSvelte.StepForward);
+export const Timer = obsidianIcon(lucideSvelte.Timer);
+export const Clock = obsidianIcon(lucideSvelte.Clock);
